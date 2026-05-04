@@ -1,0 +1,208 @@
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: #111827;
+}
+
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: #fff;
+}
+
+.label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.controls-row {
+  margin: 0.75rem 0;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.input {
+  flex: 1;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.button {
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button.secondary {
+  background: #475569;
+}
+
+.inline-code {
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.progress-block {
+  margin-top: 0.75rem;
+}
+
+.progress-track {
+  height: 10px;
+  background: #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #059669;
+  transition: width 0.2s ease;
+}
+
+.progress-caption {
+  margin-top: 0.5rem;
+}
+
+.error-inline {
+  color: #b91c1c;
+}
+
+.groups-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.groups-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.group-item {
+  display: flex;
+  gap: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.group-title {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.group-meta {
+  margin: 0 0 0.5rem;
+  color: #334155;
+  font-size: 0.9rem;
+}
+
+.discovery-info {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.error {
+  color: #b91c1c;
+  margin-top: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.chat-answer {
+  margin-top: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f8fafc;
+}
+
+.wrap-row {
+  flex-wrap: wrap;
+}
+
+.button.danger {
+  background: #b91c1c;
+}
+
+.data-status {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
+.eval-textarea {
+  width: 100%;
+  min-height: 180px;
+  margin: 0.5rem 0 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.eval-actions {
+  gap: 0.5rem;
+}
+
+.eval-cases {
+  margin-top: 0.75rem;
+}
+
+.eval-case-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  text-align: left;
+}
+
+.eval-case-list li {
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.75rem;
+}
+
+.eval-case-list li:last-child {
+  border-bottom: none;
+}
+
+.eval-answer-preview {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #334155;
+  white-space: pre-wrap;
+}

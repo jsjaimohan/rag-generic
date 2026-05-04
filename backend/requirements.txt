@@ -1,0 +1,9 @@
+fastapi
+httpx
+python-dotenv
+pydantic
+uvicorn
+beautifulsoup4
+markdownify
+qdrant-client>=1.11.0
+sentence-transformers>=3.0.0

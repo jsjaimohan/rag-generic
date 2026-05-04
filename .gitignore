@@ -1,0 +1,31 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets and local env
+.env
+backend/.env
+*.local
+
+# Large / reproducible artifacts
+backend/models/huggingface/
+backend/data/
+backend/qdrant_storage/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

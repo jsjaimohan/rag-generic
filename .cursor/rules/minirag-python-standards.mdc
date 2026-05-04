@@ -1,0 +1,77 @@
+---
+description: MiniRAG Python engineering standards for GenericRAG
+globs: **/*.py
+alwaysApply: false
+---
+
+# Cursor Rules - MiniRAG Documentation Chatbot
+
+## Core Engineering Philosophy
+
+- Simplicity first, readability first, low cognitive overhead.
+- Keep structure explicit, modular, and minimally abstracted.
+- Prioritize easy debugging, onboarding, refactoring, and future scaling.
+- Avoid premature optimization and unnecessary enterprise patterns.
+
+## Coding Rules
+
+- Prefer straightforward, explicit control flow over clever one-liners.
+- Write code junior developers can quickly understand and debug.
+- Start concrete; abstract only after clear repetition appears.
+- Avoid early generic factories, unnecessary interfaces, and heavy DI.
+- Keep one module per file by default; split only when responsibility or readability demands it.
+
+## File Design
+
+- Keep each file focused on one clear responsibility.
+- Minimize external dependencies and use predictable naming.
+- Organize files top-down: imports, constants/config, public APIs, helpers.
+
+## Naming
+
+- Use explicit function names like `generate_embeddings`, `clean_html_content`, `create_semantic_chunks`.
+- Use descriptive variable names like `markdown_content`, `semantic_chunks`, `retrieved_documents`.
+- Avoid vague identifiers such as `process`, `handle`, `data`, `obj`, `tmp`, `x`.
+
+## API Rules
+
+- Keep routes thin; place business logic in services.
+- Use explicit request/response models.
+- Do not place core business logic inside route handlers.
+
+## MiniRAG Priorities
+
+- Optimize first for retrieval quality, chunk quality, and reranking.
+- Keep prompt assembly grounded to high-signal context only.
+- Send only relevant, reranked, deduplicated chunks to the LLM.
+
+## Ingestion and Knowledge Quality
+
+- Treat markdown as canonical and preserve hierarchy, lists, tables, and code blocks.
+- Use semantic chunking by section semantics, not token count alone.
+- Generate summaries, entities, tags, relationships, and questions during ingestion.
+- Do not defer metadata generation to query-time unless necessary.
+
+## Vector DB, Embeddings, and Reranking
+
+- Keep Qdrant payloads rich with content, metadata, relationships, summaries, and source URLs.
+- Prefer structured collections by document type when needed.
+- Prefer BGE-M3 embeddings, with fallback to `bge-small-en-v1.5`.
+- Rerank retrieved candidates before prompt assembly and answer generation.
+
+## Reliability and Operations
+
+- Enforce grounded responses: answer only from provided context; state when data is unavailable.
+- Use explicit exceptions and readable error messages; avoid silent failures.
+- Log timing, failures, retrieval counts, rerank scores, and LLM latency.
+- Keep local development fully functional on Mac + LM Studio + local Qdrant.
+
+## Testing and Documentation
+
+- Add isolated, deterministic tests for modules and core retrieval/ingestion flows.
+- Document each module's purpose, inputs, outputs, and dependencies.
+- For non-trivial logic, comment why a decision exists, not only what the code does.
+
+## Final Principle
+
+- Build simple first, correct first, observable first; optimize later.
