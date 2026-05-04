@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+
+import torch
 
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
@@ -18,44 +21,79 @@ from backend.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _reranker_effective_device_lower() -> str:
+    return (settings.reranker_device or settings.embedding_device or "").strip().lower()
+
+
 class RerankerService:
     """Lazy-loaded CrossEncoder for (query, passage) relevance scores."""
 
     def __init__(self) -> None:
         self._model = None
+        self._model_lock = threading.Lock()
         self._local_snapshot_path: str | None = None
         self._warmed_up = False
 
     def _get_model(self):
-        if self._model is None:
-            from sentence_transformers import CrossEncoder
+        if self._model is not None:
+            return self._model
+        with self._model_lock:
+            if self._model is None:
+                from sentence_transformers import CrossEncoder
 
-            device = settings.reranker_device or settings.embedding_device or None
-            if not self._local_snapshot_path:
-                self._local_snapshot_path = resolve_hub_snapshot(
-                    settings.reranker_model_name
+                device = settings.reranker_device or settings.embedding_device or None
+                if not self._local_snapshot_path:
+                    self._local_snapshot_path = resolve_hub_snapshot(
+                        settings.reranker_model_name
+                    )
+                path = self._local_snapshot_path
+                logger.info(
+                    "reranker.load local_path=%s device=%s",
+                    path,
+                    device or "default",
                 )
-            path = self._local_snapshot_path
+                self._model = CrossEncoder(
+                    path,
+                    device=device,
+                    trust_remote_code=True,
+                    local_files_only=settings.st_local_files_only,
+                    backend="torch",
+                )
+            return self._model
+
+    def _mps_warmup_extra_predicts(self, model) -> None:
+        if _reranker_effective_device_lower() != "mps" or not torch.backends.mps.is_available():
+            return
+        rounds = settings.reranker_mps_warmup_rounds
+        if rounds <= 0:
+            return
+        # Small multi-pair batch to approximate first real rerank shape.
+        passage = "Warmup passage text " * 12
+        pairs = [("retrieval warmup query", passage)] * 4
+        logger.info("reranker.mps_warmup_extra_start rounds=%s", rounds)
+        for i in range(rounds):
+            t_round = time.perf_counter()
+            with torch.inference_mode():
+                model.predict(pairs, show_progress_bar=False)
+            torch.mps.synchronize()
             logger.info(
-                "reranker.load local_path=%s device=%s",
-                path,
-                device or "default",
+                "reranker.mps_warmup_extra round=%s/%s duration_s=%.3f",
+                i + 1,
+                rounds,
+                time.perf_counter() - t_round,
             )
-            self._model = CrossEncoder(
-                path,
-                device=device,
-                trust_remote_code=True,
-                local_files_only=settings.st_local_files_only,
-                backend="torch",
-            )
-        return self._model
+        logger.info("reranker.mps_warmup_extra_done")
 
     def warmup(self) -> None:
-        """Load the cross-encoder and run a trivial forward pass (JIT / GPU warmup)."""
+        """Load the cross-encoder and run dummy predict passes (MPS graph / Metal warmup)."""
         if self._warmed_up:
             return
         model = self._get_model()
-        model.predict([("warmup", "warmup")], show_progress_bar=False)
+        with torch.inference_mode():
+            model.predict([("warmup", "warmup")], show_progress_bar=False)
+        if _reranker_effective_device_lower() == "mps" and torch.backends.mps.is_available():
+            torch.mps.synchronize()
+        self._mps_warmup_extra_predicts(model)
         self._warmed_up = True
         logger.info("reranker.warmup_done")
 
@@ -81,7 +119,8 @@ class RerankerService:
             for i in range(0, len(passages), batch_size):
                 batch = passages[i : i + batch_size]
                 pairs = [(query, p) for p in batch]
-                batch_scores = model.predict(pairs, show_progress_bar=False)
+                with torch.inference_mode():
+                    batch_scores = model.predict(pairs, show_progress_bar=False)
                 scores.extend(float(s) for s in batch_scores)
             return scores
 

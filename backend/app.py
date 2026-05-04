@@ -39,6 +39,17 @@ async def _lifespan(app: FastAPI):
                 "embeddings.warmup_failed — fix HF cache or set EMBEDDING_WARMUP_ON_STARTUP=false"
             )
             raise
+    if settings.reranker_warmup_on_startup and settings.retrieval_enable_reranker:
+        from backend.reranker.reranker_service import reranker_service
+
+        try:
+            await run_in_threadpool(reranker_service.warmup)
+        except Exception:
+            logger.warning(
+                "reranker.warmup_failed — first /chat rerank may be slow; "
+                "set RERANKER_WARMUP_ON_STARTUP=false to skip this step",
+                exc_info=True,
+            )
     yield
 
 

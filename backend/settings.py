@@ -82,6 +82,10 @@ class Settings:
     embedding_warmup_on_startup: bool = _env_bool(
         "EMBEDDING_WARMUP_ON_STARTUP", True
     )
+    # When EMBEDDING_DEVICE=mps: extra encode rounds at startup + mps.synchronize() to stabilize Metal (reduces first /chat stalls).
+    embedding_mps_warmup_rounds: int = max(
+        0, int(os.getenv("EMBEDDING_MPS_WARMUP_ROUNDS", "4"))
+    )
 
     # Resolved at import time by _configure_hf_hub_cache(); BGE + reranker snapshots live here.
     huggingface_hub_cache: str = os.environ.get("HF_HUB_CACHE", "")
@@ -162,6 +166,11 @@ class Settings:
     # Wall-clock cap for an entire predict_scores call (load + all batches). 0 = no limit.
     reranker_predict_timeout_seconds: int = int(
         os.getenv("RERANKER_PREDICT_TIMEOUT_SECONDS", "300")
+    )
+    # At startup (after embedding warmup): load cross-encoder and run dummy predict (and extra MPS rounds when on mps).
+    reranker_warmup_on_startup: bool = _env_bool("RERANKER_WARMUP_ON_STARTUP", True)
+    reranker_mps_warmup_rounds: int = max(
+        0, int(os.getenv("RERANKER_MPS_WARMUP_ROUNDS", "2"))
     )
 
 

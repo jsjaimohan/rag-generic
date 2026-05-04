@@ -265,6 +265,7 @@ def _retrieve_qdrant_path(
     t = time.perf_counter()
     qvec = embedding_service.encode([query])[0]
     timings["embed_query_s"] = round(time.perf_counter() - t, 4)
+    timings.update(embedding_service.last_encode_timings)
 
     t = time.perf_counter()
     hits = qdrant_service.search_dense(
