@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 type SitemapGroup = {
@@ -35,6 +35,22 @@ type ChatResponse = {
   retrieved_count: number
   sources: string[]
 }
+
+type ChatStreamMetaPayload = {
+  retrieval_top_k_used: number
+  retrieved_count: number
+  sources: string[]
+  chunk_ids: string[]
+  retrieval_mode: string
+  retrieval_confidence_inputs: Record<string, unknown>
+  performance: Record<string, unknown>
+}
+
+type ChatStreamSseMessage =
+  | { type: 'meta'; payload: ChatStreamMetaPayload }
+  | { type: 'token'; delta: string }
+  | { type: 'done'; answer: string; performance: Record<string, unknown> }
+  | { type: 'error'; detail: string }
 
 type DataStatusResponse = {
   raw_count: number
@@ -129,6 +145,12 @@ function App() {
   const [chatSources, setChatSources] = useState<string[]>([])
   const [chatError, setChatError] = useState('')
   const [isChatting, setIsChatting] = useState(false)
+  const [streamAnswer, setStreamAnswer] = useState('')
+  const [streamMeta, setStreamMeta] = useState<ChatStreamMetaPayload | null>(null)
+  const [streamStatus, setStreamStatus] = useState('')
+  const [streamError, setStreamError] = useState('')
+  const [isStreaming, setIsStreaming] = useState(false)
+  const streamAbortRef = useRef<AbortController | null>(null)
   const [dataStatus, setDataStatus] = useState<DataStatusResponse | null>(null)
   const [cleanupError, setCleanupError] = useState('')
   const [cleanupMessage, setCleanupMessage] = useState('')
@@ -352,6 +374,98 @@ function App() {
       setChatError(error instanceof Error ? error.message : 'Failed to generate answer.')
     } finally {
       setIsChatting(false)
+    }
+  }
+
+  const handleCancelStream = () => {
+    streamAbortRef.current?.abort()
+    streamAbortRef.current = null
+  }
+
+  const handleAskStream = async () => {
+    streamAbortRef.current?.abort()
+    const controller = new AbortController()
+    streamAbortRef.current = controller
+
+    setStreamError('')
+    setStreamAnswer('')
+    setStreamMeta(null)
+    setStreamStatus('Connecting…')
+    setIsStreaming(true)
+
+    const appendToken = (delta: string) => {
+      setStreamAnswer((prev) => prev + delta)
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: chatQuestion, top_k: 4 }),
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        throw new Error(await response.text())
+      }
+      if (!response.body) {
+        throw new Error('No response body (streaming not supported in this browser).')
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      const processBlock = (block: string) => {
+        const lines = block.split('\n')
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue
+          const raw = line.slice(5).trim()
+          if (!raw) continue
+          let msg: ChatStreamSseMessage
+          try {
+            msg = JSON.parse(raw) as ChatStreamSseMessage
+          } catch {
+            continue
+          }
+          if (msg.type === 'meta') {
+            setStreamMeta(msg.payload)
+            setStreamStatus(
+              `Retrieval done · mode ${msg.payload.retrieval_mode} · ${msg.payload.retrieved_count} chunk(s). Streaming tokens…`,
+            )
+          } else if (msg.type === 'token') {
+            appendToken(msg.delta)
+          } else if (msg.type === 'done') {
+            setStreamStatus(
+              `Done · llm_generation_s=${(msg.performance.llm_generation_s as number) ?? '?'} · chat_total_s=${(msg.performance.chat_total_s as number) ?? '?'}`,
+            )
+          } else if (msg.type === 'error') {
+            throw new Error(msg.detail)
+          }
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const chunks = buffer.split('\n\n')
+        buffer = chunks.pop() ?? ''
+        for (const chunk of chunks) {
+          if (chunk.trim()) processBlock(chunk)
+        }
+      }
+      if (buffer.trim()) {
+        processBlock(buffer)
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        setStreamStatus('Cancelled.')
+        return
+      }
+      setStreamError(error instanceof Error ? error.message : 'Stream failed.')
+    } finally {
+      setIsStreaming(false)
+      streamAbortRef.current = null
     }
   }
 
@@ -758,6 +872,51 @@ function App() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="stream-panel">
+          <h3>Streaming chat (POST /chat/stream)</h3>
+          <p className="group-meta">
+            Uses the same question as above. Tokens appear in the box as LM Studio streams them (after
+            retrieval). Cancel stops the HTTP request.
+          </p>
+          <div className="row">
+            <button
+              className="button"
+              type="button"
+              onClick={() => void handleAskStream()}
+              disabled={!chatQuestion.trim() || isStreaming}
+            >
+              {isStreaming ? 'Streaming…' : 'Ask (stream)'}
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              onClick={handleCancelStream}
+              disabled={!isStreaming}
+            >
+              Cancel stream
+            </button>
+          </div>
+          <textarea
+            className="stream-output"
+            readOnly
+            value={streamAnswer}
+            placeholder="Streamed assistant reply appears here…"
+            aria-label="Streamed chat response"
+          />
+          {streamStatus ? <p className="stream-status">{streamStatus}</p> : null}
+          {streamError ? <p className="error">{streamError}</p> : null}
+          {streamMeta && streamMeta.sources.length > 0 ? (
+            <div className="chat-answer" style={{ marginTop: '0.75rem' }}>
+              <p className="group-meta">Sources (from stream meta):</p>
+              <ul>
+                {streamMeta.sources.map((source) => (
+                  <li key={source}>{source}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="card">
