@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import AsyncIterator
 from typing import Callable, TypeVar
 
 import httpx
@@ -158,18 +160,120 @@ class QwenService:
             "chat_completions", _call, retry_read_timeout=False
         )
 
+    def grounded_chat_messages_for_prompt(self, prompt: str) -> list[dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You are a student counsellor in this chat. Follow the user message: "
+                    "only state information that is supported by the supplied context."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+
     def generate_chat_response(self, prompt: str) -> str:
         """Generate answer from LM Studio chat completions endpoint."""
         return self.complete_chat(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a student counsellor in this chat. Follow the user message: "
-                        "only state information that is supported by the supplied context."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
+            messages=self.grounded_chat_messages_for_prompt(prompt),
             temperature=0.1,
         )
+
+    async def astream_complete_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.1,
+        timeout_seconds: int | None = None,
+    ) -> AsyncIterator[str]:
+        """
+        Stream assistant text deltas from ``/v1/chat/completions`` (``stream: true``).
+
+        Yields non-empty content fragments as they arrive; does not strip the full reply.
+        """
+        read_timeout = (
+            settings.lmstudio_chat_read_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        if read_timeout <= 0:
+            read_timeout = 86400
+        headers = {
+            "Authorization": f"Bearer {settings.lmstudio_api_key}",
+            "Content-Type": "application/json",
+        }
+        base_payload: dict = {
+            "model": settings.lmstudio_model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+        if settings.lmstudio_chat_disable_thinking:
+            base_payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(read_timeout),
+            write=30.0,
+            pool=5.0,
+        )
+
+        async def _stream_one(payload: dict) -> AsyncIterator[str]:
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "POST",
+                    f"{settings.lmstudio_base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    if response.status_code == 400 and "chat_template_kwargs" in payload:
+                        body_preview = (await response.aread())[:2000]
+                        logger.warning(
+                            "lmstudio.chat_completions_stream_400_retry_without_template_kwargs "
+                            "body_preview=%s",
+                            body_preview,
+                        )
+                        slim = {k: v for k, v in payload.items() if k != "chat_template_kwargs"}
+                        async with client.stream(
+                            "POST",
+                            f"{settings.lmstudio_base_url}/chat/completions",
+                            headers=headers,
+                            json=slim,
+                            timeout=timeout,
+                        ) as response2:
+                            response2.raise_for_status()
+                            async for piece in _iter_sse_text_deltas(response2):
+                                yield piece
+                        return
+                    response.raise_for_status()
+                    async for piece in _iter_sse_text_deltas(response):
+                        yield piece
+
+        async for piece in _stream_one(base_payload):
+            yield piece
+
+
+async def _iter_sse_text_deltas(response: httpx.Response) -> AsyncIterator[str]:
+    """Parse OpenAI-style SSE lines from an httpx stream response."""
+    async for line in response.aiter_lines():
+        if not line:
+            continue
+        if line.startswith(":"):
+            continue
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            obj = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        for choice in obj.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            content = delta.get("content")
+            if content:
+                yield str(content)

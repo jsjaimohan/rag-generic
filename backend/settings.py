@@ -96,7 +96,7 @@ class Settings:
     lmstudio_base_url: str = os.getenv(
         "LMSTUDIO_BASE_URL", "http://localhost:1234/v1"
     )
-    lmstudio_model: str = os.getenv("LMSTUDIO_MODEL", "phi-2-mlx")
+    lmstudio_model: str = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-e4b")
     lmstudio_api_key: str = os.getenv("LMSTUDIO_API_KEY", "lm-studio")
     # Qwen3-only: send chat_template_kwargs.enable_thinking=false. Phi/Llama/Gemma etc. should keep this false
     # (otherwise LM Studio may return 400; code retries without these kwargs on 400).
@@ -157,6 +157,16 @@ class Settings:
     )
     retrieval_listing_query_top_k: int = int(
         os.getenv("RETRIEVAL_LISTING_QUERY_TOP_K", "10")
+    )
+    # Skip cross-encoder when dense+keyword hybrid (pre-expansion pool) is already decisive.
+    retrieval_skip_rerank_on_confident_hybrid: bool = _env_bool(
+        "RETRIEVAL_SKIP_RERANK_ON_CONFIDENT_HYBRID", True
+    )
+    retrieval_skip_rerank_hybrid_score_min: float = _env_float(
+        "RETRIEVAL_SKIP_RERANK_HYBRID_SCORE_MIN", 0.85
+    )
+    retrieval_skip_rerank_hybrid_margin_min: float = _env_float(
+        "RETRIEVAL_SKIP_RERANK_HYBRID_MARGIN_MIN", 0.2
     )
     reranker_model_name: str = os.getenv(
         "RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3"

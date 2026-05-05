@@ -22,6 +22,28 @@ from backend.vectordb.qdrant_service import QdrantSearchHit, qdrant_service
 
 logger = get_logger(__name__)
 
+
+def _should_skip_cross_encoder_for_confident_hybrid(
+    merged: list[tuple[QdrantSearchHit, float, float, float]],
+) -> bool:
+    """
+    If the top two hybrid scores (dense pool, pre relationship-expansion) are strongly
+    separated, the cross-encoder is unlikely to change ordering materially — skip CE work.
+    """
+    if not settings.retrieval_skip_rerank_on_confident_hybrid:
+        return False
+    if len(merged) < 2:
+        return False
+    top1 = float(merged[0][3])
+    top2 = float(merged[1][3])
+    min_score = settings.retrieval_skip_rerank_hybrid_score_min
+    min_margin = settings.retrieval_skip_rerank_hybrid_margin_min
+    if top1 <= min_score:
+        return False
+    if (top1 - top2) <= min_margin:
+        return False
+    return True
+
 # Match legacy MiniRAG filename stem boost.
 PATH_BOOST_PER_TERM = 5
 
@@ -54,6 +76,13 @@ def _keyword_overlap_score(text: str, terms: list[str]) -> int:
     if not terms:
         return 0
     lowered = text.lower()
+    return sum(lowered.count(term) for term in terms)
+
+
+def _keyword_overlap_on_lowered(lowered: str, terms: list[str]) -> int:
+    """Same as ``_keyword_overlap_score`` when ``text`` is already lowercased."""
+    if not terms:
+        return 0
     return sum(lowered.count(term) for term in terms)
 
 
@@ -149,17 +178,23 @@ def _merge_hybrid_scores(
     """Return tuples of (hit, dense, kw_raw, hybrid) for each hit."""
     dense_raw = [h.score for h in hits]
     dense_norm = _normalize_scores(dense_raw)
-    kw_raw: list[int] = []
-    for h in hits:
-        payload = h.payload
-        blob = f"{payload.get('section_title') or ''}\n{payload.get('text') or ''}"
-        kw_raw.append(_keyword_overlap_score(blob, terms))
+    # One lowercased searchable string per hit (avoid repeated .lower() inside overlap).
+    blobs_lower = [
+        f"{h.payload.get('section_title') or ''}\n{h.payload.get('text') or ''}".lower()
+        for h in hits
+    ]
+    kw_raw = [_keyword_overlap_on_lowered(bl, terms) for bl in blobs_lower]
     kw_norm = _normalize_scores([float(x) for x in kw_raw])
     w = settings.retrieval_hybrid_keyword_weight
-    merged: list[tuple[QdrantSearchHit, float, float, float]] = []
-    for idx, h in enumerate(hits):
-        hybrid = (1.0 - w) * dense_norm[idx] + w * kw_norm[idx]
-        merged.append((h, dense_raw[idx], float(kw_raw[idx]), hybrid))
+    merged = [
+        (
+            h,
+            dense_raw[i],
+            float(kw_raw[i]),
+            (1.0 - w) * dense_norm[i] + w * kw_norm[i],
+        )
+        for i, h in enumerate(hits)
+    ]
     merged.sort(key=lambda x: x[3], reverse=True)
     return merged
 
@@ -218,37 +253,25 @@ def retrieve_for_query(query: str, top_k: int) -> RetrievalOutcome:
     relationship expansion → sort by hybrid → **cross-encoder on at most**
     ``retrieval_rerank_input_max`` (and never below ``top_k``) → return ``top_k``.
 
-    Fallback keyword paths use the same CE cap. See settings: ``RETRIEVAL_RERANK_INPUT_MAX``.
+    No pre-flight ``count_points``: an empty collection or zero hits triggers keyword fallback
+    via ``_retrieve_qdrant_path`` (or vector pipeline errors). See settings: ``RETRIEVAL_RERANK_INPUT_MAX``.
     """
     t_rq = time.perf_counter()
     terms = _extract_terms(query)
     if not terms and query.strip():
         terms = [query.lower().strip()]
 
-    t_ct = time.perf_counter()
     try:
-        n_points = qdrant_service.count_points()
+        out = _retrieve_qdrant_path(query, top_k, terms)
+        out.timings_s["retrieve_for_query_total_s"] = round(time.perf_counter() - t_rq, 4)
+        return out
     except Exception as exc:
-        logger.warning("retrieval.qdrant_count_failed error=%s", exc)
-        n_points = 0
-    count_points_s = time.perf_counter() - t_ct
-
-    if n_points > 0:
-        try:
-            out = _retrieve_qdrant_path(query, top_k, terms)
-            out.timings_s["qdrant_count_points_s"] = round(count_points_s, 4)
-            out.timings_s["retrieve_for_query_total_s"] = round(
-                time.perf_counter() - t_rq, 4
-            )
-            return out
-        except Exception as exc:
-            logger.warning(
-                "retrieval.vector_pipeline_failed — falling back to keyword manifests "
-                "(embedding/Qdrant error; reranker errors are handled inside the vector path): %s",
-                exc,
-            )
+        logger.warning(
+            "retrieval.vector_pipeline_failed — falling back to keyword manifests "
+            "(embedding/Qdrant error; reranker errors are handled inside the vector path): %s",
+            exc,
+        )
     out = _retrieve_keyword_manifests_path(query, top_k, terms)
-    out.timings_s["qdrant_count_points_s"] = round(count_points_s, 4)
     out.timings_s["retrieve_for_query_total_s"] = round(time.perf_counter() - t_rq, 4)
     return out
 
@@ -342,9 +365,23 @@ def _retrieve_qdrant_path(
     to_rerank = items_intermediate[:ce_cap]
 
     rerank_applied = False
+    confident_hybrid_skip = False
     t = time.perf_counter()
     if settings.retrieval_enable_reranker and len(to_rerank) > 1:
-        rerank_applied = _try_cross_encoder_rerank(query, to_rerank)
+        if _should_skip_cross_encoder_for_confident_hybrid(merged):
+            confident_hybrid_skip = True
+            logger.info(
+                "retrieval.cross_encoder_skipped confident_hybrid "
+                "top1_hybrid=%.4f top2_hybrid=%.4f margin=%.4f "
+                "(thresholds score_min=%.2f margin_min=%.2f)",
+                float(merged[0][3]),
+                float(merged[1][3]),
+                float(merged[0][3]) - float(merged[1][3]),
+                settings.retrieval_skip_rerank_hybrid_score_min,
+                settings.retrieval_skip_rerank_hybrid_margin_min,
+            )
+        else:
+            rerank_applied = _try_cross_encoder_rerank(query, to_rerank)
     timings["cross_encoder_rerank_s"] = round(time.perf_counter() - t, 4)
     ranked_for_trace = to_rerank
 
@@ -366,11 +403,12 @@ def _retrieve_qdrant_path(
             top2 = sorted(scores, reverse=True)
             conf.score_margin_top1_top2 = top2[0] - top2[1]
 
-    mode = (
-        "vector_hybrid_rerank"
-        if settings.retrieval_enable_reranker and rerank_applied
-        else "vector_hybrid"
-    )
+    if confident_hybrid_skip:
+        mode = "vector_hybrid_confident_skip"
+    elif settings.retrieval_enable_reranker and rerank_applied:
+        mode = "vector_hybrid_rerank"
+    else:
+        mode = "vector_hybrid"
     timings["retrieve_vector_path_inner_s"] = round(time.perf_counter() - path_t0, 4)
     timings["branch"] = "vector_qdrant"
     return RetrievalOutcome(

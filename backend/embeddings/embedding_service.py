@@ -161,11 +161,18 @@ class EmbeddingService:
         t1 = time.perf_counter()
         vectors = self._forward_encode(model, texts)
         t2 = time.perf_counter()
+        forward_s = t2 - t1
         self._last_encode_timings = {
             "embed_get_model_s": round(t1 - t0, 4),
-            "embed_forward_s": round(t2 - t1, 4),
+            "embed_forward_s": round(forward_s, 4),
             "embed_encode_total_s": round(t2 - t0, 4),
         }
+        if _embedding_device_is_mps() and forward_s > 2.5:
+            logger.info(
+                "embeddings.slow_mps_forward forward_s=%.2f — LM Studio may be contending for Metal; "
+                "try EMBEDDING_DEVICE=cpu if /chat query encodes are often multi-second.",
+                forward_s,
+            )
         return vectors.tolist()
 
 

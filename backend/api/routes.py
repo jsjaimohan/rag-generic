@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -176,6 +177,78 @@ async def chat(request: ChatRequest) -> dict:
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """
+    Same retrieval as ``POST /chat``, then stream LM Studio tokens as Server-Sent Events.
+
+    Each line is ``data: <json>\\n\\n``. Event types:
+
+    - ``meta`` — retrieval fields (no ``answer``; ``performance`` lacks ``llm_generation_s`` / ``chat_total_s``).
+    - ``token`` — ``{"type":"token","delta":"..."}`` (many events).
+    - ``done`` — full ``answer`` and final ``performance`` (adds ``llm_generation_s``, ``chat_total_s``).
+    - ``error`` — ``{"type":"error","detail":"..."}`` then the stream ends.
+    """
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query must not be empty.")
+
+    async def event_generator():
+        try:
+            meta_partial, messages = await run_in_threadpool(
+                minirag_service.prepare_chat_context,
+                request.query,
+                request.top_k,
+            )
+            yield (
+                "data: "
+                + json.dumps({"type": "meta", "payload": meta_partial}, ensure_ascii=False)
+                + "\n\n"
+            )
+
+            t_llm = time.perf_counter()
+            parts: list[str] = []
+            async for delta in qwen_service.astream_complete_chat(
+                messages=messages,
+                temperature=0.1,
+            ):
+                parts.append(delta)
+                yield (
+                    "data: "
+                    + json.dumps({"type": "token", "delta": delta}, ensure_ascii=False)
+                    + "\n\n"
+                )
+
+            answer = "".join(parts).strip()
+            llm_generation_s = time.perf_counter() - t_llm
+            perf = meta_partial["performance"]
+            retrieval_wall_s = perf["retrieval_wall_s"]
+            prompt_build_s = perf["prompt_build_s"]
+            chat_total_s = retrieval_wall_s + prompt_build_s + llm_generation_s
+            perf["llm_generation_s"] = round(llm_generation_s, 4)
+            perf["chat_total_s"] = round(chat_total_s, 4)
+
+            done_payload = {
+                "type": "done",
+                "answer": answer,
+                "performance": perf,
+            }
+            yield "data: " + json.dumps(done_payload, ensure_ascii=False) + "\n\n"
+        except Exception as exc:
+            logger.warning("chat_stream.failed error=%s", exc, exc_info=True)
+            err_payload = {"type": "error", "detail": str(exc)}
+            yield "data: " + json.dumps(err_payload, ensure_ascii=False) + "\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/evaluation/run")
