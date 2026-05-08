@@ -148,6 +148,39 @@
   background: #f8fafc;
 }
 
+.stream-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.stream-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.stream-output {
+  width: 100%;
+  min-height: 140px;
+  margin-top: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  resize: vertical;
+  background: #fafafa;
+  color: #111827;
+}
+
+.stream-status {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
 .wrap-row {
   flex-wrap: wrap;
 }

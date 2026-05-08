@@ -82,6 +82,10 @@ class Settings:
     embedding_warmup_on_startup: bool = _env_bool(
         "EMBEDDING_WARMUP_ON_STARTUP", True
     )
+    # When EMBEDDING_DEVICE=mps: extra encode rounds at startup + mps.synchronize() to stabilize Metal (reduces first /chat stalls).
+    embedding_mps_warmup_rounds: int = max(
+        0, int(os.getenv("EMBEDDING_MPS_WARMUP_ROUNDS", "4"))
+    )
 
     # Resolved at import time by _configure_hf_hub_cache(); BGE + reranker snapshots live here.
     huggingface_hub_cache: str = os.environ.get("HF_HUB_CACHE", "")
@@ -92,7 +96,7 @@ class Settings:
     lmstudio_base_url: str = os.getenv(
         "LMSTUDIO_BASE_URL", "http://localhost:1234/v1"
     )
-    lmstudio_model: str = os.getenv("LMSTUDIO_MODEL", "phi-2-mlx")
+    lmstudio_model: str = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-e4b")
     lmstudio_api_key: str = os.getenv("LMSTUDIO_API_KEY", "lm-studio")
     # Qwen3-only: send chat_template_kwargs.enable_thinking=false. Phi/Llama/Gemma etc. should keep this false
     # (otherwise LM Studio may return 400; code retries without these kwargs on 400).
@@ -107,6 +111,55 @@ class Settings:
     # /v1/chat/completions read timeout (token stream). Local models can be slow; use 0 for no read limit.
     lmstudio_chat_read_timeout_seconds: int = int(
         os.getenv("LMSTUDIO_CHAT_READ_TIMEOUT_SECONDS", "300")
+    )
+
+    # Public-facing chat LLM (can point to DeepSeek/OpenAI-compatible provider).
+    chat_llm_base_url: str = os.getenv("CHAT_LLM_BASE_URL", lmstudio_base_url)
+    chat_llm_model: str = os.getenv("CHAT_LLM_MODEL", lmstudio_model)
+    chat_llm_api_key: str = os.getenv("CHAT_LLM_API_KEY", lmstudio_api_key)
+    chat_llm_disable_thinking: bool = _env_bool(
+        "CHAT_LLM_DISABLE_THINKING", lmstudio_chat_disable_thinking
+    )
+    chat_llm_http_attempts: int = max(
+        1, int(os.getenv("CHAT_LLM_HTTP_ATTEMPTS", str(lmstudio_http_attempts)))
+    )
+    chat_llm_retry_backoff_seconds: float = float(
+        os.getenv("CHAT_LLM_RETRY_BACKOFF_SECONDS", str(lmstudio_retry_backoff_seconds))
+    )
+    chat_llm_read_timeout_seconds: int = int(
+        os.getenv(
+            "CHAT_LLM_READ_TIMEOUT_SECONDS",
+            str(lmstudio_chat_read_timeout_seconds),
+        )
+    )
+
+    # Enrichment LLM (keep local LM Studio by default).
+    enrichment_llm_base_url: str = os.getenv("ENRICHMENT_LLM_BASE_URL", lmstudio_base_url)
+    enrichment_llm_model: str = os.getenv("ENRICHMENT_LLM_MODEL", lmstudio_model)
+    enrichment_llm_api_key: str = os.getenv("ENRICHMENT_LLM_API_KEY", lmstudio_api_key)
+    enrichment_llm_disable_thinking: bool = _env_bool(
+        "ENRICHMENT_LLM_DISABLE_THINKING", lmstudio_chat_disable_thinking
+    )
+    enrichment_llm_http_attempts: int = max(
+        1,
+        int(
+            os.getenv(
+                "ENRICHMENT_LLM_HTTP_ATTEMPTS",
+                str(lmstudio_http_attempts),
+            )
+        ),
+    )
+    enrichment_llm_retry_backoff_seconds: float = float(
+        os.getenv(
+            "ENRICHMENT_LLM_RETRY_BACKOFF_SECONDS",
+            str(lmstudio_retry_backoff_seconds),
+        )
+    )
+    enrichment_llm_read_timeout_seconds: int = int(
+        os.getenv(
+            "ENRICHMENT_LLM_READ_TIMEOUT_SECONDS",
+            str(lmstudio_chat_read_timeout_seconds),
+        )
     )
 
     crawler_user_agent: str = os.getenv(
@@ -154,6 +207,16 @@ class Settings:
     retrieval_listing_query_top_k: int = int(
         os.getenv("RETRIEVAL_LISTING_QUERY_TOP_K", "10")
     )
+    # Skip cross-encoder when dense+keyword hybrid (pre-expansion pool) is already decisive.
+    retrieval_skip_rerank_on_confident_hybrid: bool = _env_bool(
+        "RETRIEVAL_SKIP_RERANK_ON_CONFIDENT_HYBRID", True
+    )
+    retrieval_skip_rerank_hybrid_score_min: float = _env_float(
+        "RETRIEVAL_SKIP_RERANK_HYBRID_SCORE_MIN", 0.85
+    )
+    retrieval_skip_rerank_hybrid_margin_min: float = _env_float(
+        "RETRIEVAL_SKIP_RERANK_HYBRID_MARGIN_MIN", 0.2
+    )
     reranker_model_name: str = os.getenv(
         "RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3"
     )
@@ -162,6 +225,11 @@ class Settings:
     # Wall-clock cap for an entire predict_scores call (load + all batches). 0 = no limit.
     reranker_predict_timeout_seconds: int = int(
         os.getenv("RERANKER_PREDICT_TIMEOUT_SECONDS", "300")
+    )
+    # At startup (after embedding warmup): load cross-encoder and run dummy predict (and extra MPS rounds when on mps).
+    reranker_warmup_on_startup: bool = _env_bool("RERANKER_WARMUP_ON_STARTUP", True)
+    reranker_mps_warmup_rounds: int = max(
+        0, int(os.getenv("RERANKER_MPS_WARMUP_ROUNDS", "2"))
     )
 
 

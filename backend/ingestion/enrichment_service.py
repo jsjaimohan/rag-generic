@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from backend.ingestion.enrichment_schema import EnrichmentArtifact, EnrichmentPayload
-from backend.llm.qwen_service import QwenService
+from backend.llm.qwen_service import LlmClientConfig, QwenService
 from backend.prompts.enrichment_prompts import (
     ENRICHMENT_SYSTEM,
     build_enrichment_user_message,
@@ -66,7 +66,17 @@ class EnrichmentService:
     """Produce and persist validated enrichment JSON under `data/enriched`."""
 
     def __init__(self) -> None:
-        self._qwen = QwenService()
+        self._qwen = QwenService(
+            config=LlmClientConfig(
+                base_url=settings.enrichment_llm_base_url,
+                model=settings.enrichment_llm_model,
+                api_key=settings.enrichment_llm_api_key,
+                disable_thinking=settings.enrichment_llm_disable_thinking,
+                http_attempts=settings.enrichment_llm_http_attempts,
+                retry_backoff_seconds=settings.enrichment_llm_retry_backoff_seconds,
+                read_timeout_seconds=settings.enrichment_llm_read_timeout_seconds,
+            )
+        )
 
     def build_fallback_payload(self, base_metadata: dict) -> EnrichmentPayload:
         """Structural fallback when the LLM fails or returns invalid JSON."""
@@ -100,7 +110,7 @@ class EnrichmentService:
             source_url=source_url,
         )
         enriched_at = datetime.now(UTC).isoformat()
-        model_id = settings.lmstudio_model
+        model_id = settings.enrichment_llm_model
 
         try:
             raw = self._qwen.complete_chat(
