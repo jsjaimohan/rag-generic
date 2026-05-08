@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Callable, TypeVar
 
 import httpx
@@ -19,15 +20,40 @@ _TRANSIENT_HTTP_STATUS = frozenset({429, 502, 503, 504})
 T = TypeVar("T")
 
 
+@dataclass(frozen=True)
+class LlmClientConfig:
+    base_url: str
+    model: str
+    api_key: str
+    disable_thinking: bool
+    http_attempts: int
+    retry_backoff_seconds: float
+    read_timeout_seconds: int
+
+
+def _default_lmstudio_config() -> LlmClientConfig:
+    return LlmClientConfig(
+        base_url=settings.lmstudio_base_url,
+        model=settings.lmstudio_model,
+        api_key=settings.lmstudio_api_key,
+        disable_thinking=settings.lmstudio_chat_disable_thinking,
+        http_attempts=settings.lmstudio_http_attempts,
+        retry_backoff_seconds=settings.lmstudio_retry_backoff_seconds,
+        read_timeout_seconds=settings.lmstudio_chat_read_timeout_seconds,
+    )
+
+
 def _with_lmstudio_retries(
     operation: str,
     fn: Callable[[], T],
     *,
     retry_read_timeout: bool,
+    attempts: int,
+    backoff: float,
 ) -> T:
     """Run ``fn`` with retries on connection failures and transient HTTP statuses."""
-    attempts = settings.lmstudio_http_attempts
-    backoff = max(0.0, settings.lmstudio_retry_backoff_seconds)
+    attempts = max(1, attempts)
+    backoff = max(0.0, backoff)
     for attempt in range(attempts):
         try:
             return fn()
@@ -57,13 +83,16 @@ def _with_lmstudio_retries(
 class QwenService:
     """LM Studio ``/v1/chat/completions`` client (model id from ``LMSTUDIO_MODEL``)."""
 
+    def __init__(self, config: LlmClientConfig | None = None) -> None:
+        self._config = config or _default_lmstudio_config()
+
     def health_check(self) -> dict:
         """Validate LM Studio endpoint and model listing endpoint."""
-        headers = {"Authorization": f"Bearer {settings.lmstudio_api_key}"}
+        headers = {"Authorization": f"Bearer {self._config.api_key}"}
 
         def _call() -> dict:
             response = httpx.get(
-                f"{settings.lmstudio_base_url}/models",
+                f"{self._config.base_url}/models",
                 headers=headers,
                 timeout=5,
             )
@@ -73,10 +102,16 @@ class QwenService:
             return {
                 "ok": True,
                 "models_count": len(model_ids),
-                "configured_model_found": settings.lmstudio_model in model_ids,
+                "configured_model_found": self._config.model in model_ids,
             }
 
-        return _with_lmstudio_retries("health_models", _call, retry_read_timeout=True)
+        return _with_lmstudio_retries(
+            "health_models",
+            _call,
+            retry_read_timeout=True,
+            attempts=self._config.http_attempts,
+            backoff=self._config.retry_backoff_seconds,
+        )
 
     def complete_chat(
         self,
@@ -87,7 +122,7 @@ class QwenService:
     ) -> str:
         """Raw chat completion (multi-message) for structured prompts."""
         read_timeout = (
-            settings.lmstudio_chat_read_timeout_seconds
+            self._config.read_timeout_seconds
             if timeout_seconds is None
             else timeout_seconds
         )
@@ -95,16 +130,16 @@ class QwenService:
         if read_timeout <= 0:
             read_timeout = 86400
         headers = {
-            "Authorization": f"Bearer {settings.lmstudio_api_key}",
+            "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
         }
         payload: dict = {
-            "model": settings.lmstudio_model,
+            "model": self._config.model,
             "messages": messages,
             "temperature": temperature,
         }
         # Qwen3 “thinking” mode — unsupported on Phi/Llama/Gemma; leave LMSTUDIO_CHAT_DISABLE_THINKING=false.
-        if settings.lmstudio_chat_disable_thinking:
+        if self._config.disable_thinking:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         # Split timeouts so a dead LM Studio host fails on connect quickly (not multi‑minute hangs).
         timeout = httpx.Timeout(
@@ -124,7 +159,7 @@ class QwenService:
 
         def _call() -> str:
             response = httpx.post(
-                f"{settings.lmstudio_base_url}/chat/completions",
+                f"{self._config.base_url}/chat/completions",
                 headers=headers,
                 json=payload,
                 timeout=timeout,
@@ -138,7 +173,7 @@ class QwenService:
                 )
                 slim = {k: v for k, v in payload.items() if k != "chat_template_kwargs"}
                 response = httpx.post(
-                    f"{settings.lmstudio_base_url}/chat/completions",
+                    f"{self._config.base_url}/chat/completions",
                     headers=headers,
                     json=slim,
                     timeout=timeout,
@@ -157,7 +192,11 @@ class QwenService:
 
         # Do not retry read timeouts: the server may still complete the first request.
         return _with_lmstudio_retries(
-            "chat_completions", _call, retry_read_timeout=False
+            "chat_completions",
+            _call,
+            retry_read_timeout=False,
+            attempts=self._config.http_attempts,
+            backoff=self._config.retry_backoff_seconds,
         )
 
     def grounded_chat_messages_for_prompt(self, prompt: str) -> list[dict[str, str]]:
@@ -192,23 +231,23 @@ class QwenService:
         Yields non-empty content fragments as they arrive; does not strip the full reply.
         """
         read_timeout = (
-            settings.lmstudio_chat_read_timeout_seconds
+            self._config.read_timeout_seconds
             if timeout_seconds is None
             else timeout_seconds
         )
         if read_timeout <= 0:
             read_timeout = 86400
         headers = {
-            "Authorization": f"Bearer {settings.lmstudio_api_key}",
+            "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
         }
         base_payload: dict = {
-            "model": settings.lmstudio_model,
+            "model": self._config.model,
             "messages": messages,
             "temperature": temperature,
             "stream": True,
         }
-        if settings.lmstudio_chat_disable_thinking:
+        if self._config.disable_thinking:
             base_payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         timeout = httpx.Timeout(
@@ -222,7 +261,7 @@ class QwenService:
             async with httpx.AsyncClient() as client:
                 async with client.stream(
                     "POST",
-                    f"{settings.lmstudio_base_url}/chat/completions",
+                    f"{self._config.base_url}/chat/completions",
                     headers=headers,
                     json=payload,
                     timeout=timeout,
@@ -237,7 +276,7 @@ class QwenService:
                         slim = {k: v for k, v in payload.items() if k != "chat_template_kwargs"}
                         async with client.stream(
                             "POST",
-                            f"{settings.lmstudio_base_url}/chat/completions",
+                            f"{self._config.base_url}/chat/completions",
                             headers=headers,
                             json=slim,
                             timeout=timeout,

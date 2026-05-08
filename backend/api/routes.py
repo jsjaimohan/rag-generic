@@ -209,7 +209,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
             t_llm = time.perf_counter()
             parts: list[str] = []
-            async for delta in qwen_service.astream_complete_chat(
+            async for delta in minirag_service.qwen_service.astream_complete_chat(
                 messages=messages,
                 temperature=0.1,
             ):

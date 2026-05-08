@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 
-from backend.llm.qwen_service import QwenService
+from backend.llm.qwen_service import LlmClientConfig, QwenService
 from backend.prompts.prompts import build_grounded_chat_prompt
 from backend.rag.context_bundle import (
     bundle_items_to_serializable,
@@ -62,7 +62,17 @@ class MiniRagService:
     """Hybrid / vector retrieval with reranking, then LM Studio text generation."""
 
     def __init__(self) -> None:
-        self.qwen_service = QwenService()
+        self.qwen_service = QwenService(
+            config=LlmClientConfig(
+                base_url=settings.chat_llm_base_url,
+                model=settings.chat_llm_model,
+                api_key=settings.chat_llm_api_key,
+                disable_thinking=settings.chat_llm_disable_thinking,
+                http_attempts=settings.chat_llm_http_attempts,
+                retry_backoff_seconds=settings.chat_llm_retry_backoff_seconds,
+                read_timeout_seconds=settings.chat_llm_read_timeout_seconds,
+            )
+        )
 
     def prepare_chat_context(self, user_query: str, top_k: int = 4) -> tuple[dict, list[dict[str, str]]]:
         """

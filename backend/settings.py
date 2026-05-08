@@ -113,6 +113,55 @@ class Settings:
         os.getenv("LMSTUDIO_CHAT_READ_TIMEOUT_SECONDS", "300")
     )
 
+    # Public-facing chat LLM (can point to DeepSeek/OpenAI-compatible provider).
+    chat_llm_base_url: str = os.getenv("CHAT_LLM_BASE_URL", lmstudio_base_url)
+    chat_llm_model: str = os.getenv("CHAT_LLM_MODEL", lmstudio_model)
+    chat_llm_api_key: str = os.getenv("CHAT_LLM_API_KEY", lmstudio_api_key)
+    chat_llm_disable_thinking: bool = _env_bool(
+        "CHAT_LLM_DISABLE_THINKING", lmstudio_chat_disable_thinking
+    )
+    chat_llm_http_attempts: int = max(
+        1, int(os.getenv("CHAT_LLM_HTTP_ATTEMPTS", str(lmstudio_http_attempts)))
+    )
+    chat_llm_retry_backoff_seconds: float = float(
+        os.getenv("CHAT_LLM_RETRY_BACKOFF_SECONDS", str(lmstudio_retry_backoff_seconds))
+    )
+    chat_llm_read_timeout_seconds: int = int(
+        os.getenv(
+            "CHAT_LLM_READ_TIMEOUT_SECONDS",
+            str(lmstudio_chat_read_timeout_seconds),
+        )
+    )
+
+    # Enrichment LLM (keep local LM Studio by default).
+    enrichment_llm_base_url: str = os.getenv("ENRICHMENT_LLM_BASE_URL", lmstudio_base_url)
+    enrichment_llm_model: str = os.getenv("ENRICHMENT_LLM_MODEL", lmstudio_model)
+    enrichment_llm_api_key: str = os.getenv("ENRICHMENT_LLM_API_KEY", lmstudio_api_key)
+    enrichment_llm_disable_thinking: bool = _env_bool(
+        "ENRICHMENT_LLM_DISABLE_THINKING", lmstudio_chat_disable_thinking
+    )
+    enrichment_llm_http_attempts: int = max(
+        1,
+        int(
+            os.getenv(
+                "ENRICHMENT_LLM_HTTP_ATTEMPTS",
+                str(lmstudio_http_attempts),
+            )
+        ),
+    )
+    enrichment_llm_retry_backoff_seconds: float = float(
+        os.getenv(
+            "ENRICHMENT_LLM_RETRY_BACKOFF_SECONDS",
+            str(lmstudio_retry_backoff_seconds),
+        )
+    )
+    enrichment_llm_read_timeout_seconds: int = int(
+        os.getenv(
+            "ENRICHMENT_LLM_READ_TIMEOUT_SECONDS",
+            str(lmstudio_chat_read_timeout_seconds),
+        )
+    )
+
     crawler_user_agent: str = os.getenv(
         "CRAWLER_USER_AGENT", "GenericRAGBot/1.0 (+https://local.dev)"
     )
